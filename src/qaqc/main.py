@@ -5,19 +5,6 @@ import matplotlib as mp
 from qiskit import ClassicalRegister, QuantumCircuit
 from qiskit.primitives import StatevectorSampler
 
-'''
-IBM reduced gate set: {RZ, SX, CZ}
-
-We do this due to the combination of {RZ, RX, and X}
-can be made from {RZ, and SX} combinations directly &
-are less error prone (with RZ being strictly 0 noise)
-
-Since you only need one 2-qubit gate to achieve universal
-quantum computing we choose CZ as its naturally better
-supported in IBM architecture over CX that is build by a
-modulation technique over CZ's natural implementation.
-'''
-
 
 def trainableGate(bit_count):
     '''
