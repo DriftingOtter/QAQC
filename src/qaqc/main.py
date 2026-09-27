@@ -1,15 +1,11 @@
 import math
 import numpy as np
 import pandas as pd
+import tensorflow as tf
 import matplotlib as mp
 
-from qiskit import ClassicalRegister, QuantumCircuit
+from qiskit import ClassicalRegister, QuantumCircuit, circuit
 from qiskit.primitives import StatevectorSampler
-
-import tensorflow as tf
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense
-from tensorflow.keras.optimizers import Adam
 
 
 def trainableGate(bit_count, theta):
@@ -25,14 +21,14 @@ def trainableGate(bit_count, theta):
         supported in IBM architecture over CX that is build by a
         modulation technique over CZ's natural implementation.
     '''
-    train_para = theta
+
     layer_count = 3  # <-- From |IBM_mininal_gate_set|
 
     ansatz = QuantumCircuit(bit_count, name="V")
     for layer in range(0, layer_count-1):
         # Per-bit Layer
         for bit in range(bit_count):
-            ansatz.rz(phi=train_para, qubit=bit)
+            ansatz.rz(phi=theta.numpy().item(), qubit=bit)
         # Entanglement Layer
         for bit in range(0, math.ceil((bit_count-1)/2)):
             ansatz.cz(control_qubit=bit, target_qubit=bit+1)
@@ -64,7 +60,7 @@ def distillationCircuit(teacher_circuit, ansatz):
 
     # Trainable gate on second register
     if not (0 <= ansatz <= 2 * math.pi):
-        raise ValueError("ansatz must be between 0 and 2π")
+        ansatz = tf.math.floormod(ansatz, 2 * math.pi)
     tg = trainableGate(
         bit_count=teacher_bits,
         theta=ansatz
@@ -94,25 +90,31 @@ def runEpoch(distillationCircuit, shots_per_epoch):
     counts = result[0].data.meas.get_counts()
 
     # | 000...0 > state key mask for any size n
-    state_mask = "0" * int(teacher_circuit.num_qubits*2)
-    zero_count = counts.get(state_mask)
+    state_mask = "0" * distillationCircuit.num_qubits
+    zero_count = counts.get(state_mask, 0)
 
     score = loss(zero_count=zero_count, shots_per_epoch=shots_per_epoch)
     return score
 
 
-def dAccuracydTheta(diff):
-    return 1/2 * (diff[1] + diff[2])
+def calculateGradient(diff, delta):
+    return (diff[0] - diff[1])/(2*delta)
 
 
 if __name__ == "__main__":
+    grad = math.inf
+    curr_loss = math.inf
+    max_epoch = 10_000
 
-    # hyper-parameters
-    acc = 0
-    curr_ansatz = tf.Variable(tf.constant(math.pi)/2.0, dtype=tf.float64)
-    shots_per_epoch = 4000
+    # Hyper-parameters
+    delta = 0.01
+    optimizer_learning_rate = 0.01
+    curr_ansatz = tf.Variable(tf.constant(math.pi)/2.0, dtype=tf.float32)
+    shots_per_epoch = 24000
 
-    optimizer = Adam(learning_rate=0.01)
+    # Inital Guess
+    curr_loss = math.inf
+    optimizer = tf.keras.optimizers.Adam(learning_rate=optimizer_learning_rate)
 
     # Ideal Circuit
     teacher_circuit = QuantumCircuit(2, name="U")
@@ -120,14 +122,72 @@ if __name__ == "__main__":
     teacher_circuit.cx(0, 1)
     tc = teacher_circuit.to_gate()
 
-    delta = math.pi/4
-    qc_1 = distillationCircuit(teacher_circuit=tc, ansatz=curr_ansatz)
-    qc_2 = distillationCircuit(teacher_circuit=tc, ansatz=curr_ansatz+delta)
-    qc_3 = distillationCircuit(teacher_circuit=tc, ansatz=curr_ansatz-delta)
+    if tc.definition is not None:
+        curr_circuit = QuantumCircuit(tc.num_qubits)
+        curr_circuit.append(
+            tc, [bit for bit in range(curr_circuit.num_qubits)])
 
-    acc_1 = runEpoch(distillationCircuit=qc_1, shots_per_epoch=shots_per_epoch)
-    acc_2 = runEpoch(distillationCircuit=qc_2, shots_per_epoch=shots_per_epoch)
-    acc_3 = runEpoch(distillationCircuit=qc_3, shots_per_epoch=shots_per_epoch)
+        print("Ideal Circuit:")
+        print(curr_circuit.draw("text"))
+        print()
 
-    finite_diffs = (acc_1, acc_2, acc_3)
-    grad_acc = dAccuracydTheta(diff=finite_diffs)
+    epoch = 0
+    while not (curr_loss < 0.01 and abs(grad) < 0.001) and epoch <= max_epoch:
+        epoch += 1
+        print(f"| Epoch:{epoch} \t Current Guess: {curr_ansatz.read_value()}")
+
+        # Calculate Current Loss
+        qc_1 = distillationCircuit(
+            teacher_circuit=tc, ansatz=curr_ansatz
+        )
+        curr_loss = runEpoch(distillationCircuit=qc_1,
+                             shots_per_epoch=shots_per_epoch
+                             )
+
+        # Calculate Parametric Gradient
+        qc_2 = distillationCircuit(
+            teacher_circuit=tc, ansatz=curr_ansatz+delta
+        )
+        forward_loss = runEpoch(distillationCircuit=qc_2,
+                                shots_per_epoch=shots_per_epoch
+                                )
+
+        qc_3 = distillationCircuit(
+            teacher_circuit=tc, ansatz=curr_ansatz-delta
+        )
+        backward_loss = runEpoch(distillationCircuit=qc_3,
+                                 shots_per_epoch=shots_per_epoch
+                                 )
+
+        loss_delta = (forward_loss, backward_loss)
+        loss_grad = calculateGradient(loss_delta, delta)
+
+        # Update curr_ansatz to next optimized value
+        optimizer.apply_gradients(
+            [(loss_grad, curr_ansatz)]
+        )
+
+        grad = loss_grad
+
+        print(
+            f"| Current Loss: {curr_loss} \t Gradient: {loss_grad}"
+        )
+        print(
+            f"| Next Guess: {curr_ansatz.read_value()}"
+        )
+        print()
+
+    print("\n========= Training Complete! =========\n")
+
+    # Retrieve optimized circuit
+    qc = trainableGate(bit_count=teacher_circuit.num_qubits,
+                       theta=curr_ansatz)
+
+    if qc.definition is not None:
+        curr_circuit = QuantumCircuit(qc.num_qubits)
+        curr_circuit.append(
+            qc, [bit for bit in range(curr_circuit.num_qubits)])
+
+        print("Optimized Circuit:")
+        print(curr_circuit.draw("text"))
+        print()
