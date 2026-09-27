@@ -6,6 +6,11 @@ import matplotlib as mp
 from qiskit import ClassicalRegister, QuantumCircuit
 from qiskit.primitives import StatevectorSampler
 
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense
+from tensorflow.keras.optimizers import Adam
+
 
 def trainableGate(bit_count, theta):
     '''
@@ -77,7 +82,37 @@ def distillationCircuit(teacher_circuit, ansatz):
     return qc
 
 
+def loss(zero_count, shots_per_epoch):
+    loss = 1.0 - (zero_count/shots_per_epoch)
+    return loss
+
+
+def runEpoch(distillationCircuit, shots_per_epoch):
+    sampler = StatevectorSampler()
+    job = sampler.run([distillationCircuit], shots=shots_per_epoch)
+    result = job.result()
+    counts = result[0].data.meas.get_counts()
+
+    # | 000...0 > state key mask for any size n
+    state_mask = "0" * int(teacher_circuit.num_qubits*2)
+    zero_count = counts.get(state_mask)
+
+    score = loss(zero_count=zero_count, shots_per_epoch=shots_per_epoch)
+    return score
+
+
+def dAccuracydTheta(diff):
+    return 1/2 * (diff[1] + diff[2])
+
+
 if __name__ == "__main__":
+
+    # hyper-parameters
+    acc = 0
+    curr_ansatz = tf.Variable(tf.constant(math.pi)/2.0, dtype=tf.float64)
+    shots_per_epoch = 4000
+
+    optimizer = Adam(learning_rate=0.01)
 
     # Ideal Circuit
     teacher_circuit = QuantumCircuit(2, name="U")
@@ -85,12 +120,14 @@ if __name__ == "__main__":
     teacher_circuit.cx(0, 1)
     tc = teacher_circuit.to_gate()
 
-    qc = distillationCircuit(teacher_circuit=tc, ansatz=math.pi/2)
-    print(qc.draw('text'))
+    delta = math.pi/4
+    qc_1 = distillationCircuit(teacher_circuit=tc, ansatz=curr_ansatz)
+    qc_2 = distillationCircuit(teacher_circuit=tc, ansatz=curr_ansatz+delta)
+    qc_3 = distillationCircuit(teacher_circuit=tc, ansatz=curr_ansatz-delta)
 
-    sampler = StatevectorSampler()
-    job = sampler.run([qc], shots=2000)
-    result = job.result()
-    counts = result[0].data.meas.get_counts()
+    acc_1 = runEpoch(distillationCircuit=qc_1, shots_per_epoch=shots_per_epoch)
+    acc_2 = runEpoch(distillationCircuit=qc_2, shots_per_epoch=shots_per_epoch)
+    acc_3 = runEpoch(distillationCircuit=qc_3, shots_per_epoch=shots_per_epoch)
 
-    print(f"Measurement Counts: {counts}")
+    finite_diffs = (acc_1, acc_2, acc_3)
+    grad_acc = dAccuracydTheta(diff=finite_diffs)
