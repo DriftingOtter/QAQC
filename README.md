@@ -15,22 +15,22 @@ The quantum computer is not directly deciding how the ansatz should change. Its 
 
 ```mermaid
 flowchart TD
-    U[Teacher Circuit U] --> DC[Build Comparison / Distillation Circuit]
-    T[Current Parameter Vector θ] --> V[Construct Trainable Circuit V(θ)]
+    U["Teacher Circuit U"] --> DC["Build Comparison / Distillation Circuit"]
+    T["Current Parameter Vector theta"] --> V["Construct Trainable Circuit V(theta)"]
     V --> DC
 
-    DC --> S[Execute with StatevectorSampler<br/>for N shots]
-    S --> P[Count measurements of<br/>|00...0⟩]
-    P --> L[Loss C(θ) = 1 - N₀ / N]
+    DC --> S["Execute with StatevectorSampler<br/>for N shots"]
+    S --> P["Count measurements of<br/>all-zero state"]
+    P --> L["Loss C(theta) = 1 - N0 / N"]
 
-    L --> FD[Evaluate θᵢ + δ and θᵢ - δ<br/>for every parameter]
-    FD --> G[Centered Finite-Difference<br/>Gradient Vector ∇C]
-    G --> A[Adam Optimizer]
-    A --> T2[Updated Parameter Vector θ]
+    L --> FD["Evaluate theta_i + delta and theta_i - delta<br/>for every parameter"]
+    FD --> G["Centered Finite-Difference<br/>Gradient Vector"]
+    G --> A["Adam Optimizer"]
+    A --> T2["Updated Parameter Vector theta"]
 
-    T2 --> STOP{Loss < 0.01<br/>and max |gradient| < 0.01?}
-    STOP -- No --> DC
-    STOP -- Yes --> OUT[Return Optimized V(θ)]
+    T2 --> STOP{"Loss &lt; 0.01<br/>and max abs(gradient) &lt; 0.01?"}
+    STOP -- "No" --> DC
+    STOP -- "Yes" --> OUT["Return Optimized V(theta)"]
 ```
 
 ---
@@ -90,12 +90,12 @@ The fixed `SX` gates provide the non-$Z$ rotations needed to make the surroundin
 
 ```mermaid
 flowchart LR
-    IN[Input State] --> L1[Layer 1<br/>RZ-SX-RZ-SX-RZ<br/>on every qubit]
-    L1 --> E1[CZ Entanglement]
-    E1 --> L2[Layer 2<br/>RZ-SX-RZ-SX-RZ<br/>on every qubit]
-    L2 --> E2[CZ Entanglement]
-    E2 --> L3[Layer 3<br/>RZ-SX-RZ-SX-RZ<br/>on every qubit]
-    L3 --> VOUT[V(θ)]
+    IN["Input State"] --> L1["Layer 1<br/>RZ-SX-RZ-SX-RZ<br/>on every qubit"]
+    L1 --> E1["CZ Entanglement"]
+    E1 --> L2["Layer 2<br/>RZ-SX-RZ-SX-RZ<br/>on every qubit"]
+    L2 --> E2["CZ Entanglement"]
+    E2 --> L3["Layer 3<br/>RZ-SX-RZ-SX-RZ<br/>on every qubit"]
+    L3 --> VOUT["V(theta)"]
 ```
 
 Before $V(\theta)$ is inserted into the comparison circuit, every component of $\theta$ is reduced modulo $2\pi$. This keeps the numerical representation of the rotation angles bounded without changing the periodic action of the corresponding rotations.
@@ -115,18 +115,18 @@ The circuit first creates Bell-pair correlations between the two registers:
 
 ```mermaid
 flowchart LR
-    Z0[|0⟩^n<br/>Teacher Register] --> H[H on Teacher Register]
-    Z1[|0⟩^n<br/>Trainable Register] --> BELL
-    H --> BELL[CX Across Registers<br/>Create Bell Pairs]
+    Z0["Initial zero state<br/>Teacher Register"] --> H["H on Teacher Register"]
+    Z1["Initial zero state<br/>Trainable Register"] --> BELL
+    H --> BELL["CX Across Registers<br/>Create Bell Pairs"]
 
-    BELL --> U[Apply U<br/>Teacher Register]
-    BELL --> V[Apply V(θ)<br/>Trainable Register]
+    BELL --> U["Apply U<br/>Teacher Register"]
+    BELL --> V["Apply V(theta)<br/>Trainable Register"]
 
-    U --> UNDO[Undo Cross-Register CX]
+    U --> UNDO["Undo Cross-Register CX"]
     V --> UNDO
-    UNDO --> HU[H on Teacher Register]
-    HU --> M[Measure All 2n Qubits]
-    M --> ZERO[Read probability of |00...0⟩]
+    UNDO --> HU["H on Teacher Register"]
+    HU --> M["Measure All 2n Qubits"]
+    M --> ZERO["Read probability of all-zero state"]
 ```
 
 The implementation treats the frequency of the all-zero outcome as its circuit-similarity signal. If $N_0$ is the number of all-zero measurements and $N$ is the total number of shots, then
@@ -201,12 +201,12 @@ Adam maintains moving estimates of the first and second moments of each componen
 
 ```mermaid
 flowchart LR
-    GP[Forward / Backward<br/>Loss Samples] --> G[Gradient gᵢ]
-    G --> M[Adam First Moment<br/>running mean]
-    G --> R[Adam Second Moment<br/>running squared magnitude]
-    M --> STEP[Adaptive Parameter Step]
+    GP["Forward / Backward<br/>Loss Samples"] --> G["Gradient g_i"]
+    G --> M["Adam First Moment<br/>running mean"]
+    G --> R["Adam Second Moment<br/>running squared magnitude"]
+    M --> STEP["Adaptive Parameter Step"]
     R --> STEP
-    STEP --> TH[Update θᵢ]
+    STEP --> TH["Update theta_i"]
 ```
 
 ### 6. Training loop and stopping condition
@@ -337,20 +337,20 @@ Coordinates the complete training procedure:
 
 ```mermaid
 flowchart TD
-    START[Initialize Hyperparameters] --> U[Create Teacher Circuit U]
-    U --> TH[Initialize θ = π/2]
-    TH --> CURR[Evaluate Current Loss]
-    CURR --> LOOP[For each θᵢ]
-    LOOP --> PLUS[Evaluate θ + δeᵢ]
-    LOOP --> MINUS[Evaluate θ - δeᵢ]
-    PLUS --> DERIV[Centered Difference]
+    START["Initialize Hyperparameters"] --> U["Create Teacher Circuit U"]
+    U --> TH["Initialize theta = pi / 2"]
+    TH --> CURR["Evaluate Current Loss"]
+    CURR --> LOOP["For each theta_i"]
+    LOOP --> PLUS["Evaluate theta + delta e_i"]
+    LOOP --> MINUS["Evaluate theta - delta e_i"]
+    PLUS --> DERIV["Centered Difference"]
     MINUS --> DERIV
-    DERIV --> GV[Assemble Full Gradient Vector]
-    GV --> ADAM[Adam Update]
-    ADAM --> LOG[Print Training Diagnostics]
-    LOG --> CHECK{Converged?}
-    CHECK -- No --> CURR
-    CHECK -- Yes --> FINAL[Construct and Print Optimized V(θ)]
+    DERIV --> GV["Assemble Full Gradient Vector"]
+    GV --> ADAM["Adam Update"]
+    ADAM --> LOG["Print Training Diagnostics"]
+    LOG --> CHECK{"Converged?"}
+    CHECK -- "No" --> CURR
+    CHECK -- "Yes" --> FINAL["Construct and Print Optimized V(theta)"]
 ```
 
 ---
@@ -368,4 +368,5 @@ The optimizer is also presently based on a sampled centered finite difference ra
 ## Work Cited
 
 **Khatri, S., LaRose, R., Poremba, A., Cincio, L., Sornborger, A. T., & Coles, P. J. (2019). _Quantum-assisted quantum compiling_. Quantum, 3, 140.**
+
 
