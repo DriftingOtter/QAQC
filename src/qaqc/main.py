@@ -1,10 +1,8 @@
 import math
 import numpy as np
-import pandas as pd
 import tensorflow as tf
-import matplotlib as mp
 
-from qiskit import ClassicalRegister, QuantumCircuit, circuit
+from qiskit import QuantumCircuit
 from qiskit.primitives import StatevectorSampler
 
 

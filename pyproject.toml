@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "qaqc"
+version = "0.1.0"
+description = "Quantum-Assisted Quantum Compilation (QAQC) - teacher-student circuit distillation"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = {text = "MIT"}
+authors = [{name = "DriftingOtter"}]
+dependencies = [
+  "numpy==2.5.3",
+  "qiskit==2.5.2",
+  "tensorflow==2.21.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/DriftingOtter/QAQC"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/qaqc"]
