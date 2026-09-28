@@ -22,7 +22,7 @@ def trainableGate(bit_count, theta):
         modulation technique over CZ's natural implementation.
     '''
 
-    layer_count = 3  # <-- From |IBM_mininal_gate_set|
+    layer_count = 3
     theta_index = 0
 
     ansatz = QuantumCircuit(bit_count, name="V")
