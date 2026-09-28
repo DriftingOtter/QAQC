@@ -8,7 +8,7 @@ Quantum-Assisted Quantum Compilation (QAQC) can be viewed as a **teacher–stude
 
 The implementation is therefore split into two interacting systems:
 
-1. **Quantum evaluation** — construct a comparison circuit containing both $U$ and $V(\theta)$, execute it for a finite number of shots, and convert the probability of measuring the all-zero state into a loss.
+1. **Quantum evaluation** — construct a comparison circuit containing both $U$ and $V^*(\theta)$, execute it for a finite number of shots, and convert the probability of measuring the all-zero state into a loss.
 2. **Classical optimization** — estimate how that loss changes with respect to every component of $\theta$, then use Adam to update the complete parameter vector.
 
 The quantum computer is not directly deciding how the ansatz should change. Its role is to return an experimentally measurable score for the current candidate circuit. The optimizer then uses repeated evaluations of that score to move $V(\theta)$ toward the target operation.
@@ -16,7 +16,7 @@ The quantum computer is not directly deciding how the ansatz should change. Its 
 ```mermaid
 flowchart TD
     U["Teacher Circuit U"] --> DC["Build Comparison / Distillation Circuit"]
-    T["Current Parameter Vector theta"] --> V["Construct Trainable Circuit V(theta)"]
+    T["Current Parameter Vector theta"] --> V["Construct Trainable Gate V*(theta)"]
     V --> DC
 
     DC --> S["Execute with StatevectorSampler<br/>for N shots"]
@@ -30,7 +30,7 @@ flowchart TD
 
     T2 --> STOP{"Loss &lt; 0.01<br/>and max abs(gradient) &lt; 0.01?"}
     STOP -- "No" --> DC
-    STOP -- "Yes" --> OUT["Return Optimized V(theta)"]
+    STOP -- "Yes" --> OUT["Return Optimized V*(theta)"]
 ```
 
 ---
@@ -46,11 +46,13 @@ The implementation distinguishes between two circuits:
 
 In the current example, $U$ is a two-qubit Bell-state preparation circuit:
 
-```text
-q_0: ──H──■──
-          │
-q_1: ─────X──
-```
+$$
+|00\rangle
+\;\xrightarrow{\,H\otimes I\,}\;
+\frac{|00\rangle+|10\rangle}{\sqrt{2}}
+\;\xrightarrow{\,CX_{0\rightarrow1}\,}\;
+\frac{|00\rangle+|11\rangle}{\sqrt{2}}.
+$$
 
 The ansatz $V(\theta)$ is built from the reduced gate set
 
@@ -88,17 +90,23 @@ $$
 
 The fixed `SX` gates provide the non-$Z$ rotations needed to make the surrounding trainable `RZ` angles expressive. Between the first and second, and second and third, single-qubit layers, the current implementation inserts `CZ` entangling gates. For the present two-qubit example this produces one `CZ(0,1)` entangler at each of those boundaries.
 
-```mermaid
-flowchart LR
-    IN["Input State"] --> L1["Layer 1<br/>RZ-SX-RZ-SX-RZ<br/>on every qubit"]
-    L1 --> E1["CZ Entanglement"]
-    E1 --> L2["Layer 2<br/>RZ-SX-RZ-SX-RZ<br/>on every qubit"]
-    L2 --> E2["CZ Entanglement"]
-    E2 --> L3["Layer 3<br/>RZ-SX-RZ-SX-RZ<br/>on every qubit"]
-    L3 --> VOUT["V(theta)"]
-```
+Writing each single-qubit layer as $L_k(\theta)$ and each `CZ` entangling layer as $E_k$, the three-layer structure is
 
-Before $V(\theta)$ is inserted into the comparison circuit, every component of $\theta$ is reduced modulo $2\pi$. This keeps the numerical representation of the rotation angles bounded without changing the periodic action of the corresponding rotations.
+$$
+V(\theta)
+=
+L_3(\theta)\,E_2\,L_2(\theta)\,E_1\,L_1(\theta).
+$$
+
+After constructing $V(\theta)$, `trainableGate()` returns `ansatz.to_gate().inverse().reverse_ops()`. For the current symmetric gate set $\{R_Z,\;SX,\;CZ\}$, this produces
+
+$$
+V^*(\theta),
+$$
+
+which is the form applied to the trainable register in the comparison circuit.
+
+Before the trainable gate is constructed for the comparison circuit, every component of $\theta$ is reduced modulo $2\pi$. This keeps the numerical representation of the rotation angles bounded without changing the periodic action of the corresponding rotations.
 
 ### 3. Quantum comparison / distillation circuit
 
@@ -109,25 +117,23 @@ The circuit first creates Bell-pair correlations between the two registers:
 1. Apply $H$ to every qubit in the first register.
 2. Apply `CX(i, i+n)` from each teacher-register qubit to its partner in the second register.
 3. Apply $U$ to the first register.
-4. Apply $V(\theta)$ to the second register.
+4. Apply $V^*(\theta)$ to the second register.
 5. Undo the Bell-pair preparation with the inverse `CX` sequence followed by $H$ gates.
 6. Measure all $2n$ qubits.
 
-```mermaid
-flowchart LR
-    Z0["Initial zero state<br/>Teacher Register"] --> H["H on Teacher Register"]
-    Z1["Initial zero state<br/>Trainable Register"] --> BELL
-    H --> BELL["CX Across Registers<br/>Create Bell Pairs"]
+In circuit form, the comparison follows
 
-    BELL --> U["Apply U<br/>Teacher Register"]
-    BELL --> V["Apply V(theta)<br/>Trainable Register"]
-
-    U --> UNDO["Undo Cross-Register CX"]
-    V --> UNDO
-    UNDO --> HU["H on Teacher Register"]
-    HU --> M["Measure All 2n Qubits"]
-    M --> ZERO["Read probability of all-zero state"]
-```
+$$
+\begin{aligned}
+|0\rangle^{\otimes 2n}
+&\xrightarrow{\,H^{\otimes n}\otimes I^{\otimes n}\,}
+\xrightarrow{\,\prod_{i=0}^{n-1} CX_{i,i+n}\,}
+\xrightarrow{\,U\otimes V^*(\theta)\,} \\
+&\xrightarrow{\,\prod_{i=0}^{n-1} CX_{i,i+n}\,}
+\xrightarrow{\,H^{\otimes n}\otimes I^{\otimes n}\,}
+\text{measure}.
+\end{aligned}
+$$
 
 The implementation treats the frequency of the all-zero outcome as its circuit-similarity signal. If $N_0$ is the number of all-zero measurements and $N$ is the total number of shots, then
 
@@ -199,16 +205,6 @@ $$
 
 Adam maintains moving estimates of the first and second moments of each component of the gradient. The practical effect in this implementation is that the raw finite-difference derivative is not used as a fixed gradient-descent step. Adam instead scales the update for each component of $\theta$ according to its recent gradient behavior.
 
-```mermaid
-flowchart LR
-    GP["Forward / Backward<br/>Loss Samples"] --> G["Gradient g_i"]
-    G --> M["Adam First Moment<br/>running mean"]
-    G --> R["Adam Second Moment<br/>running squared magnitude"]
-    M --> STEP["Adaptive Parameter Step"]
-    R --> STEP
-    STEP --> TH["Update theta_i"]
-```
-
 ### 6. Training loop and stopping condition
 
 The current run begins with every trainable angle initialized to
@@ -273,7 +269,7 @@ This is one of the central computational tradeoffs of the current design: the fi
 
 ### `trainableGate(bit_count, theta)`
 
-Constructs the parameterized student circuit $V(\theta)$.
+Constructs the parameterized student circuit $V(\theta)$ and returns $V^*(\theta)$ for use in the comparison circuit.
 
 **Responsibilities:**
 
@@ -282,18 +278,18 @@ Constructs the parameterized student circuit $V(\theta)$.
 - places three trainable `RZ` gates on each qubit per layer;
 - places fixed `SX` gates between those rotations;
 - inserts `CZ` entanglement between trainable layers;
-- converts the resulting `QuantumCircuit` into a reusable Qiskit gate.
+- converts the resulting `QuantumCircuit` into the $V^*(\theta)$ gate returned to the comparison circuit.
 
 ### `distillationCircuit(teacher_circuit, ansatz)`
 
-Constructs the $2n$-qubit circuit used to compare $U$ and $V(\theta)$.
+Constructs the $2n$-qubit circuit used to compare $U$ and $V(\theta)$ through $U$ and $V^*(\theta)$.
 
 **Responsibilities:**
 
 - prepares Bell-pair correlations between two $n$-qubit registers;
 - applies the teacher circuit to the first register;
 - wraps the trainable parameters modulo $2\pi$;
-- constructs and applies $V(\theta)$ to the second register;
+- constructs and applies $V^*(\theta)$ to the second register;
 - reverses the Bell preparation;
 - measures the complete system.
 
@@ -333,31 +329,13 @@ These values separate three different questions during training: **how good the 
 
 ### `__main__`
 
-Coordinates the complete training procedure:
-
-```mermaid
-flowchart TD
-    START["Initialize Hyperparameters"] --> U["Create Teacher Circuit U"]
-    U --> TH["Initialize theta = pi / 2"]
-    TH --> CURR["Evaluate Current Loss"]
-    CURR --> LOOP["For each theta_i"]
-    LOOP --> PLUS["Evaluate theta + delta e_i"]
-    LOOP --> MINUS["Evaluate theta - delta e_i"]
-    PLUS --> DERIV["Centered Difference"]
-    MINUS --> DERIV
-    DERIV --> GV["Assemble Full Gradient Vector"]
-    GV --> ADAM["Adam Update"]
-    ADAM --> LOG["Print Training Diagnostics"]
-    LOG --> CHECK{"Converged?"}
-    CHECK -- "No" --> CURR
-    CHECK -- "Yes" --> FINAL["Construct and Print Optimized V(theta)"]
-```
+Coordinates the complete training procedure shown in the execution-flow diagram in the Executive Overview.
 
 ---
 
 ## Current Implementation Boundary
 
-This README documents the behavior of the implementation as it currently exists. In particular, `distillationCircuit()` applies $U$ directly to the first register and $V(\theta)$ directly to the second register, then uses the all-zero probability after uncomputing the Bell preparation as the optimization signal.
+This README documents the behavior of the implementation as it currently exists. In particular, `distillationCircuit()` applies $U$ directly to the first register and $V^*(\theta)$ to the second register, then uses the all-zero probability after uncomputing the Bell preparation as the optimization signal.
 
 That convention should be kept explicit when comparing this program mathematically against the exact global cost construction in Khatri et al. The code overview above describes **what this implementation computes** rather than silently assuming that every register-side transformation is identical to the notation used in the paper.
 
@@ -368,5 +346,4 @@ The optimizer is also presently based on a sampled centered finite difference ra
 ## Work Cited
 
 **Khatri, S., LaRose, R., Poremba, A., Cincio, L., Sornborger, A. T., & Coles, P. J. (2019). _Quantum-assisted quantum compiling_. Quantum, 3, 140.**
-
 
