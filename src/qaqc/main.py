@@ -42,7 +42,7 @@ def trainableGate(bit_count, theta):
             for bit in range(0, math.ceil((bit_count-1)/2)):
                 ansatz.cz(control_qubit=bit, target_qubit=bit+1)
 
-    v = ansatz.to_gate()
+    v = ansatz.to_gate().inverse().reverse_ops()
     return v
 
 
